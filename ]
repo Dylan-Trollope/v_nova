@@ -1,0 +1,182 @@
+/*
+ * © V-Nova International Limited 2021, all rights reserved. 
+ * This code is provided by V-Nova to assess engineering candidates.
+ * It should not be shared externally without prior permission from V-Nova.
+ *
+ * THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+ * PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+ * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ */
+#include <iostream>
+#include <cstdlib>
+#include <fstream>
+#include <vector>
+#include <map>
+#include <cmath>
+#include <algorithm>
+
+class Results
+{
+	double average_image_entropy;
+	double percentage_intra_blocks;
+
+public:
+	Results(double entropy, double percentage)
+		: average_image_entropy(entropy)
+		, percentage_intra_blocks(percentage)
+	{
+	}
+
+	void write_results(std::string filename, int B)
+	{
+		std::ofstream fd;
+		fd.open(filename, std::ios_base::app);
+		fd << B << "," << average_image_entropy << "," << percentage_intra_blocks << std::endl;
+		fd.close();
+	}
+};
+
+
+std::vector<unsigned char> read_image_file(std::string filename, int N)
+{
+	std::basic_ifstream<unsigned char> file(filename, std::ios::binary);
+
+	unsigned int image_size = N * N;
+	std::vector<unsigned char> vec(image_size);
+	file.read(reinterpret_cast<unsigned char*>(vec.data()), image_size);
+	return vec;
+}
+
+std::vector<short> compute_residual_image(std::vector<unsigned char> X, std::vector<unsigned char> Y, int N)
+{
+	/*
+	 * We cast from unsigned char to short using static_cast
+     * The 2D iamge is in a 1D vector so we use N * i + j to get the corresp.
+     * index
+	 */
+	std::vector<short> R(N * N);
+	for (int i = 0; i < N; i++)
+	{
+		for (int j = 0; j < N; j++)
+		{
+			//R[i, j] = .....
+            int index = N * i + j;
+            R[index] = static_cast<short>(X[index]) - static_cast<short>(Y[index]);
+		}
+	}
+	return R;
+}
+
+template <typename T>
+double calculate_entropy_of_image_block(std::vector<T> img, int tl_i, int tl_j, int B)
+{
+	/*
+	 * hist is a vector representing frequency of all possible pixel vals (0-255),
+     * initially set to 0
+     * image[index] is the pixel value of image at index
+     * so hist[image[index]]++ adds 1 to the bin which 
+     *  represents the value of the current pixel at index
+	 */
+	double entropy = 0.0;
+    std::vector<int> hist(256,0); 
+
+    for (int i = tl_i; i < tl_i + B; i++) {
+        for (int j = tl_j; j < tl_j + B; j++) {
+           int index = i * B + j; // same intuition as above 
+           hist[img[index]]++;
+        }
+    }
+
+    /*
+     * We need the pmf of image vals
+     * It makes sense to normalise for the whole block: (B * B) 
+    */
+    int area = B * B;
+    for (int x = 0; x < 256; x++) {
+        double p_x = static_cast<double> (hist[x]) / area; //normalise
+
+        if (p_x > 0.0) { // we may not see some pixel values, we can ignore these
+            entropy += p_x * std::log2(p_x);
+        }
+    }
+	return -entropy;
+}
+
+
+Results adaptive_coding_algorithm(std::vector<unsigned char> X, std::vector<short> R, int B, int N)
+{
+	double entropy = 0.0;
+	double percentage = 0.0;
+    int numBlocks = 0;
+    int numIntras = 0;
+    
+    std::vector<std::vector<bool>> metadata(N / B, std::vector<bool>(N / B, false));
+
+	for (int i = 0; i < N; i += B)
+	{
+		for (int j = 0; j < N; j += B)
+		{
+			double hX = calculate_entropy_of_image_block(X, i, j, B);
+			double hR = calculate_entropy_of_image_block(R, i, j, B);
+            numBlocks++;
+
+            if (hX <= hR) { // intra mode
+                entropy += hX;
+                metadata[i/B][j/B] = true;
+            } else { //inter mode 
+                entropy += hR;
+            }
+		}
+	} 
+    entropy /= numBlocks;
+
+	Results res(entropy, percentage);
+	return res;
+}
+
+int main(int argc, char* argv[])
+{
+	int N = 512;
+	int B = atoi(argv[1]);
+
+	std::cout << "Image dimensions (NxN): " << N << "x" << N << std::endl;
+	std::cout << "Block size (NxN): " << B << "x" << B << std::endl;
+
+	if (N % B != 0)
+	{
+		std::cout << "Not valid value of block size B" << std::endl;
+		return -1;
+	}
+	
+	std::string filenameX = "imageX_512x512.raw";
+	std::string filenameY = "imageY_512x512.raw";
+	std::string output_filename = "results.txt";
+
+	// Read images X and Y
+	std::vector<unsigned char> X = read_image_file(filenameX, N);
+	std::vector<unsigned char> Y = read_image_file(filenameY, N);
+    
+    for (unsigned char c : X) { 
+        std::cout << c << " ";
+    }
+
+
+    /*
+	std::vector<short> R = compute_residual_image(X, Y, N);
+
+	std::vector<int> Bs = { 2, 4, 8, 16, 32, 64, 128, 256, 512 };
+	for (int k = 0; k < Bs.size(); k++)
+	{
+		B = Bs[k];
+		//Results res = adaptive_coding_algorithm(X, R, B, N);
+		//res.write_results(output_filename, B);
+	}
+    */
+	
+	return 0;
+}
+
